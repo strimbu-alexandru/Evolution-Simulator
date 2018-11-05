@@ -1,3 +1,29 @@
 For the first version, I am trying to increase the number of offsprings when an organism has a high fitness.
 The program seems to give the expected result in general, but it seems like the population could be heavily affected by bad mutations that will still propagate.
 Possible solutions: maybe try to make it more resistant to changes? (a clause could be harder to lose?) (tried to put more variables / clause)
+
+What I tried:
+	- put more / less variables per clause
+	- change the number of offsprings for different fitness levels / consider an average fitness for this
+	- different probabilities (smaller is better), number of rounds, organisms, variables
+	- tried more / less variables / genes
+	- place offspring randomly / in vicinity
+	
+Ideas:  (from the article)
+	different weights for different clauses?
+	replace worse individual in the population (not just random)
+	co-evolutionary approach (2 populations that compete - solution and constraint population)
+	change the weights over time (when we find hard constraints)
+	generating constraints for tests
+	
+Benchmark: all ors / ands (sum the clauses)
+Add weights to clauses
+read a file: weights clauses etc
+matplotlib
+reporudctibility purposes: a way to pick a normal number generator (use numpy) pass seeds (random seeds) (not essential now)
+Do some runs with different landscapes (default + a single clause with all variables + other landscapes)
+report: average fitness + fittest nearby mutants 
+think: children / timing reporduction (fitness equivalent?)
+try not to  make it spatial (use buffer)
+neighbours - a single mutation distance
+
