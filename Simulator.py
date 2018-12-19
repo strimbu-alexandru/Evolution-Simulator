@@ -78,7 +78,13 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         self._avgMutList = []      #average fitness of the possible mutants per round
         self._avgFitterList = []   #average fitness of the possible mutants that have higher fitness per round
         self._maxPossibleFitness = maxPossibleFitness   #used to normalize fitness before plotting
+        self._normList = []     #used to display the normalization equivalent
         self._neighbourData = {}
+        self._max5SelList = []
+        self._min5SelList = []
+        self._maxSelList = []
+        self._minSelList = []
+        self._avgSelList = []
         
     def updateStats(self) :
         rnd = self._population.getRound()
@@ -88,16 +94,67 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         self._maxFitList.append((rnd, maxDFit))
         self._avgMutList.append((rnd, avgMut))
         self._avgFitterList.append((rnd, avgFitter))
+        self._normList.append((rnd, 1 / self._maxPossibleFitness))
+        (maxSel, minSel, max5Sel, min5Sel, avgSel) = self._computeSelection(roundNeighbourData)  #compute the selection coefficients statistics
+        self._maxSelList.append((rnd, maxSel)) 
+        self._minSelList.append((rnd, minSel))
+        self._min5SelList.append((rnd, min5Sel))
+        self._max5SelList.append((rnd, max5Sel))
+        self._avgSelList.append((rnd, avgSel))
+     
         
     def plotStats(self):     #plot all the stats so far; each stat can also be plotted separately
-        plt.title("Local statistics")
+        plt.title("Local fitness statistics")
         plt.xlabel("Rounds")
-        plt.ylabel("Delta fitness")
+        plt.ylabel(r'$\Delta$' + ' raw fitness')
         self.plotMaxFit()
         self.plotAvgMut()
         self.plotAvgFitter()
+        self.plotNorm()
         plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
         plt.show()
+        plt.title("Selection coefficient statistics")
+        plt.xlabel("Rounds")
+        plt.ylabel("Selection coefficient")
+        self.plotAvgSel()
+        self.plotMinSel()
+        self.plotMaxSel()
+        self.plotMin5Sel()
+        self.plotMax5Sel()
+        self._fillPlot(self._maxSelList, self._max5SelList)  #fill between max and max 5 percent
+        self._fillPlot(self._minSelList, self._min5SelList)  #fill between min and min 5 percent
+        plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+        plt.show()
+        
+    def _fillPlot(self, extreme, middle):
+        xs = [x[0] for x in extreme]  #fill between 2 lines
+        ys1 = [x[1] for x in extreme]
+        ys2 = [x[1] for x in middle]
+        plt.fill_between(xs, ys1, ys2, color = "royalblue")
+        
+    def plotMax5Sel(self):
+        self._plotSelStat(self._max5SelList, "Maximum 5% average", "green")
+        
+    def plotMin5Sel(self):
+        self._plotSelStat(self._min5SelList, "Minimum 5% average", "green")
+    
+    def plotAvgSel(self):
+        self._plotSelStat(self._avgSelList, "Average", "red")
+    
+    def plotMaxSel(self):
+        self._plotSelStat(self._maxSelList, "Maximum", "blue")
+        
+    def plotMinSel(self):
+        self._plotSelStat(self._minSelList, "Minimum", "blue")
+    
+    def _plotSelStat(self, statList, des, clr):
+        xs = [x[0] for x in statList]
+        ys = [x[1] for x in statList]
+        plt.plot(xs,ys, label = des, color = clr)
+        
+        
+    def plotNorm(self):
+        self._plotStat(self._normList, "Normalization value", '--')
         
     def plotMaxFit(self):
         self._plotStat(self._maxFitList, "Fittest possible mutant")
@@ -108,10 +165,10 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
     def plotAvgFitter(self):
         self._plotStat(self._avgFitterList, "Average of possible mutants that are fitter")
         
-    def _plotStat(self, statList, des):
+    def _plotStat(self, statList, des, lineType = '-'):
         xs = [x[0] for x in statList]
         ys = [x[1] for x in statList]
-        plt.plot(xs, ys, label = des)
+        plt.plot(xs, ys, lineType, label = des)
         
     def _computeStats(self, roundNeighbourData):
         maxDFit = 0
@@ -136,7 +193,24 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         if nAvgFitter == 0:
             nAvgFitter = 1
         return (maxDFit, sAvgMut / nAvgMut, sAvgFitter / nAvgFitter)
-    
+                                
+    def _computeSelection(self, roundNeighbourData):
+        selection = []
+        for org in self._population.getOrganisms():
+            (fit, mutDeltaFit) = roundNeighbourData[org]
+            maxMutDeltaFit = max(mutDeltaFit)
+            selection.append(maxMutDeltaFit / fit)     #compute the selection coefficient
+        selection.sort()
+        maxSel = selection[-1]
+        minSel = selection[0]
+        size = len(selection)
+        size5per = int (math.ceil(size * 0.05))
+        max5Sel = np.mean(selection[size - size5per : size])
+        min5Sel = np.mean(selection[:size5per])
+        avgSel = np.mean(selection)
+        return (maxSel, minSel, max5Sel, min5Sel, avgSel)
+        
+                                
     def getNeighbourData(self):
         return self._neighbourData;    #this contains the local data (neighbour data) for a round, and organism, its fitness and its possible mutants fitness
     
@@ -164,10 +238,11 @@ class Statistics:                       #contains all the statistics and methods
         self._max5PerFitList.append((rnd, self._computeMax5PerFit() / self._maxPossibleFitness))
         self._min5PerFitList.append((rnd, self._computeMin5PerFit() / self._maxPossibleFitness))
         
+        
     def plotStats(self):     #plot all the stats so far; each stat can also be plotted separately
-        plt.title("General statistics")
+        plt.title("General fitness statistics")
         plt.xlabel("Rounds")
-        plt.ylabel("Fitness")
+        plt.ylabel("Normalized fitness")
         self.plotAvgFit()
         self.plotMinFit()
         self.plotMaxFit()
