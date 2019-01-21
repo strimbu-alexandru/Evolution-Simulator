@@ -1,8 +1,10 @@
 import random
 from random import randint, shuffle
+from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+import warnings
 
 class Clause:                    
     def __init__(self, elems, weight):
@@ -51,9 +53,7 @@ class Organism:
         myFitness = self._fitness               
         s = int(np.random.poisson(myFitness - 1, 1) + 1)   #draw a sample from Poisson distribution; we ensure that each organism has at least one offspring
         dct[label] = Organism(self._genome.copy(), self._env, self._prob);
-        for i in range (0, s):                                  # we must have at most n children, so we integrate this directly in the sampling
-            offsprings.append(label)
-        return offsprings
+        return (s, label)          #we return the number of offsprings and a label to identify their (common) genome
     
     def getFitness(self):
         return self._fitness
@@ -95,11 +95,7 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         self._avgMutList.append((rnd, avgMut))
         self._avgFitterList.append((rnd, avgFitter))
         self._normList.append((rnd, 1 / self._maxPossibleFitness))
-        (maxSel, minSel, max5Sel, min5Sel, avgSel) = self._computeSelection(roundNeighbourData)  #compute the selection coefficients statistics
-        self._maxSelList.append((rnd, maxSel)) 
-        self._minSelList.append((rnd, minSel))
-        self._min5SelList.append((rnd, min5Sel))
-        self._max5SelList.append((rnd, max5Sel))
+        avgSel = self._computeSelection(roundNeighbourData)  #compute the selection coefficients statistics
         self._avgSelList.append((rnd, avgSel))
      
         
@@ -117,12 +113,6 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         plt.xlabel("Rounds")
         plt.ylabel("Selection coefficient")
         self.plotAvgSel()
-        self.plotMinSel()
-        self.plotMaxSel()
-        self.plotMin5Sel()
-        self.plotMax5Sel()
-        self._fillPlot(self._maxSelList, self._max5SelList)  #fill between max and max 5 percent
-        self._fillPlot(self._minSelList, self._min5SelList)  #fill between min and min 5 percent
         plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
         plt.show()
         
@@ -131,26 +121,26 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         ys1 = [x[1] for x in extreme]
         ys2 = [x[1] for x in middle]
         plt.fill_between(xs, ys1, ys2, color = "royalblue")
-        
-    def plotMax5Sel(self):
-        self._plotSelStat(self._max5SelList, "Maximum 5% average", "green")
-        
-    def plotMin5Sel(self):
-        self._plotSelStat(self._min5SelList, "Minimum 5% average", "green")
     
     def plotAvgSel(self):
-        self._plotSelStat(self._avgSelList, "Average", "red")
+        self._plotSelStat(self._avgSelList, "Average selection coefficient", "red")
     
-    def plotMaxSel(self):
-        self._plotSelStat(self._maxSelList, "Maximum", "blue")
-        
-    def plotMinSel(self):
-        self._plotSelStat(self._minSelList, "Minimum", "blue")
-    
-    def _plotSelStat(self, statList, des, clr):
+    def _plotSelStat(self, statList, des, clr):     #plot the selection and fit the power law and exponential curves
         xs = [x[0] for x in statList]
         ys = [x[1] for x in statList]
-        plt.plot(xs,ys, label = des, color = clr)
+        def expFunc(x, a, c, d):
+            return a*np.exp(-c*x)+d
+        popt, pcov = curve_fit(expFunc, xs, ys)
+        plt.plot(xs,ys, 'ro', label = des, color = clr)
+        yy = [expFunc(x, *popt) for x in xs]
+        plt.plot(xs,yy, label = "Exponential decay", color = "blue")
+        def powFunc(x, m, c, c0):
+            return c0 + x**m * c
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            popt, pcov = curve_fit(powFunc, xs, ys)
+            yy = [powFunc(x, *popt) for x in xs]
+        plt.plot(xs,yy, label = "Power law decay", color = "yellow")
         
         
     def plotNorm(self):
@@ -201,14 +191,8 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
             maxMutDeltaFit = max(mutDeltaFit)
             selection.append(maxMutDeltaFit / fit)     #compute the selection coefficient
         selection.sort()
-        maxSel = selection[-1]
-        minSel = selection[0]
-        size = len(selection)
-        size5per = int (math.ceil(size * 0.05))
-        max5Sel = np.mean(selection[size - size5per : size])
-        min5Sel = np.mean(selection[:size5per])
         avgSel = np.mean(selection)
-        return (maxSel, minSel, max5Sel, min5Sel, avgSel)
+        return avgSel
         
                                 
     def getNeighbourData(self):
@@ -377,10 +361,29 @@ class Population:                        #contains the current population and st
             totalFitness += self._organisms[i].getFitness()
         dct = {}                                                 #map a label to an organism; use it only after getting n from the next generation pool
         for i in range(0, self._orgNum):
-            nextGenPool += self. _organisms[i].offsprings(totalFitness, self._orgNum, i, dct)       #compute the next generation pool (of labels, for efficiency)
-        shuffle(nextGenPool)                               #shuffle the pool
-        self._organisms = [dct[x] for x in nextGenPool[:self._orgNum]]                   #get only the first orgNum from it; others are discarded
-        self._stats.updateStats()                                      #update the stats for the new generation
+            nextGenPool.append(self. _organisms[i].offsprings(totalFitness, self._orgNum, i, dct))       #compute the next generation pool (of pairs (number of orgs, label) )
+        
+        sumNextPool = 0
+        
+        for (num, label) in nextGenPool:                       #compute the total number of orgs in next gen pool
+        	sumNextPool += num
+        totalRemaining = self._orgNum                                #remaining number of orgs to complete
+        self._organisms = []
+        
+        for (num, label) in nextGenPool[:-1]:
+            if totalRemaining <= 0:
+                currNum = 0
+            else:
+                currNum = np.random.hypergeometric(num, sumNextPool - num, totalRemaining)     #sample from the hypergeometric distribution the current number of organisms to add
+            sumNextPool -= num
+            totalRemaining -= currNum
+            for i in range (0, currNum):
+                self._organisms.append(dct[label])
+       
+        for i in range (0, totalRemaining):                      #add the remaining ones
+        	self._organisms.append(dct[label])
+  
+        self._stats.updateStats()                                #update the stats for the new generation
         self._localStats.updateStats()
 
 
@@ -400,8 +403,7 @@ class Simulator:
     
     def run(self):
         for i in range (0, self._rounds):
-            self._population.nextGeneration()
-        
+            self._population.nextGeneration()    
     def printLocalStatistics(self):
     	self._population.getLocalStats().plotStats()
     	
