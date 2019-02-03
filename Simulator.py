@@ -5,12 +5,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import warnings
+from abc import ABCMeta, abstractmethod
 
-class Clause:                    
+class Constraint:
+	_metaclass_ = ABCMeta
+	
+	@abstractmethod
+	def evaluate (self,variables): pass
+	
+	@abstractmethod
+	def getWeight(self): pass
+
+class Constraint1(Constraint):     #sat-clause constraint                    
     def __init__(self, elems, weight):
         self._elems = elems        #the elements in a clause
         self._weight = weight      #the weight for each clause
-    def evaluate (self,variables):
+    def evaluate (self, variables, domains):  #for this type of constraint, we can ignore the domains, as it must be binary
         res = 1
         
         n = len(self._elems)
@@ -24,36 +34,111 @@ class Clause:
         return res * self._weight
     def getWeight(self):
         return self._weight
+        
+class Constraint2unary(Constraint):         #unary constraint for the binary model
+    def __init__(self, elem, weight):
+        self._elem = elem        	#the variable / gene to which it refers
+        self._weight = weight       #the weight attributed to it
+        
+    def evaluate(self, variables, domains):   #for this type of constraint, we can ignore the domains, as it must be binary
+        if variables[self._elem] == 1 :
+            return self._weight
+        return 0
+    def getWeight(self):
+        return max(0,self._weight)
+    
+class Constraint2binaryType1(Constraint):         #binary constraint for the binary model, the first type
+    def __init__(self, elems, weights):
+        self._elems = elems        	  #the variables / genes to which it refers (an array of 2 elements)
+        self._weights = weights       #the weights attributed to it (an array of 2 elements)
+        
+    def evaluate(self, variables, domains):   #for this type of constraint, we can ignore the domains, as it must be binary
+        if variables[self._elems[0]] == 0 and variables[self._elems[1]] == 1 :
+            return self._weights[0]
+        if variables[self._elems[0]] == 1 and variables[self._elems[1]] == 0 :
+            return self._weights[1]
+        return 0
+    def getWeight(self):
+        return max(0,np.amax(self._weights))
+        
+class Constraint2binaryType2(Constraint):         #binary constraint for the binary model, the second type
+    def __init__(self, elems, weights):
+        self._elems = elems        	  #the variables / genes to which it refers (an array of 2 elements)
+        self._weights = weights       #the weights attributed to it (an array of 2 elements)
+        
+    def evaluate(self, variables, domains):   #for this type of constraint, we can ignore the domains, as it must be binary
+        if variables[self._elems[0]] == 0 and variables[self._elems[1]] == 0 :
+            return self._weights[0]
+        if variables[self._elems[0]] == 1 and variables[self._elems[1]] == 1 :
+            return self._weights[1]
+        return 0
+    def getWeight(self):
+        return max(0,np.amax(self._weights))
+        
+class Constraint3(Constraint):					 #the most general constraint
+	def __init__(self, elems, weightInfo):   	 #we are given elements and the weightInfo (a weight function and a maximum weight value that is used in the statistics)
+		self._elems = elems 					 #the variables / genes to which it refers (an array)
+		self._weightFunction = weightInfo[0]      #get the weight function
+		self._maxWeight = weightInfo[1]          #get the max weight
+	def evaluate(self, variables, domains):
+		args = []
+		for elem in self._elems:
+			args.append(domains[elem][variables[elem]])
+		return self._weightFunction(args)
+	def getWeight(self):
+		return self._maxWeight
 
+class Constraint4(Constraint):					#the general wcsp
+    def __init__(self, elems, weight):
+        self._vars = elems[0]					#elems contains a tuple which shows the variables used and a list of elements that match the constraint
+        self._relations = elems[1]
+        self._weight = weight
 
+    def evaluate(self, variables, domains):
+        currVal = []
+        for var in self._vars:
+            currVal.append(domains[var][variables[var]])
+        for rel in self._relations:
+            if rel == currVal:
+                return self._weight
+        return 0
+    def getWeight(self):
+        return self._weight
+    
 class Organism:
-    def __init__(self, genome, env, prob):     #env = environment = list of clauses
+    def __init__(self, genome, constraints, prob, domains, fitOffset):    
         self._genome = genome
-        self._env = env
+        self._domains = domains
+        self._constraints = constraints
+        self._fitOffset = fitOffset
         self._fitness = self._computeFitness()
         self._prob = prob
     
     def _computeFitness(self):
-        solvedClauses = 0
-        clauseNum = len(self._env)
-        for clause in self._env :
-            solvedClauses += clause.evaluate(self._genome)
-        return solvedClauses + 1         #fitness >= 1
+        solvedConstraints = 0
+        constraintNum = len(self._constraints)
+        for clause in self._constraints :
+            solvedConstraints += clause.evaluate(self._genome, self._domains)
+        return solvedConstraints + self._fitOffset         #fitness >= fitOffset (generally 1)
     
     def mutate(self):                        #triggers a mutation cycle where each gene can change with probability prob
         varNum = len(self._genome)
         for i in range(0, varNum) :
-            doMutation = np.random.binomial(1, self._prob, 1)
+            doMutation = np.random.binomial(1, self._prob[i], 1)    #do the mutation with the probability of the respective gene
             if doMutation == 1:
-                self._genome[i] = 1 - self._genome[i]
+                domain = self._domains[i]
+                x = 1
+                domLen = len(domain)
+                if domLen > 2:                                      #in this case, we have to decide to which value of the domain we mutate
+                    x = np.random.randint(1, domLen)                #sample an offset
+                self._genome[i] = (x + self._genome[i]) % domLen
         self._fitness = self._computeFitness()
         
-    def offsprings(self, totalFitness, orgNum, label, dct):                    #returns a list of offsprings based on the current fitness
-        offsprings = []
+    def offspring(self, orgNum, label, dct):                    #returns the number of offspring and a label to identify their (common) genome
         myFitness = self._fitness               
         s = int(np.random.poisson(myFitness - 1, 1) + 1)   #draw a sample from Poisson distribution; we ensure that each organism has at least one offspring
-        dct[label] = Organism(self._genome.copy(), self._env, self._prob);
-        return (s, label)          #we return the number of offsprings and a label to identify their (common) genome
+        dct[label] = Organism(self._genome.copy(), self._constraints, self._prob, self._domains, self._fitOffset);
+        return (s, label)       
     
     def getFitness(self):
         return self._fitness
@@ -65,9 +150,12 @@ class Organism:
         res = []
         l = len(self._genome)
         for i in range (0, l) :
-            newGenome = self._genome.copy()
-            newGenome[i] = 1 - newGenome[i]
-            res.append(Organism(newGenome, self._env, self._prob))
+            domain = self._domains[i]
+            domLen = len(domain)
+            for off in range (1, domLen):
+                newGenome = self._genome.copy()
+                newGenome[i] = (newGenome[i] + off) % domLen
+                res.append(Organism(newGenome, self._constraints, self._prob, self._domains, self._fitOffset))
         return res
 
 
@@ -321,22 +409,21 @@ class Statistics:                       #contains all the statistics and methods
 
 
 class Population:                        #contains the current population and statistics; is updated on nextGeneration call
-    def __init__(self, orgNum, env, prob, initial):
+    def __init__(self, orgNum, constraints, prob, initial, domains, fitOffset):
         self._orgNum = orgNum
-        self._env = env
-        self._prob = prob
+        self._constraints = constraints
         self._organisms = []
         self._round = 0
-        self._maxPossibleFitness = 1    #used to normalize fitness when plotting
+        self._maxPossibleFitness = fitOffset    #used to normalize fitness when plotting
         
-        for x in env:
+        for x in constraints:
             self._maxPossibleFitness += x.getWeight()
 
         self._stats = Statistics(self, self._maxPossibleFitness, self._orgNum)
         self._localStats = LocalStatistics(self, self._maxPossibleFitness)    
 
         for i in range(0, self._orgNum):
-            self._organisms.append(Organism(initial, self._env, self._prob))
+            self._organisms.append(Organism(initial, self._constraints, prob, domains, fitOffset))
         self._stats.updateStats()
         self._localStats.updateStats()
 
@@ -355,14 +442,9 @@ class Population:                        #contains the current population and st
     def nextGeneration(self):
         nextGenPool = []
         self._round += 1
-        totalFitness = 0                                        #compute total fitness for offspring generation
-        for i in range(0, self._orgNum):
-            self._organisms[i].mutate()                          #generate mutations
-            totalFitness += self._organisms[i].getFitness()
         dct = {}                                                 #map a label to an organism; use it only after getting n from the next generation pool
         for i in range(0, self._orgNum):
-            nextGenPool.append(self. _organisms[i].offsprings(totalFitness, self._orgNum, i, dct))       #compute the next generation pool (of pairs (number of orgs, label) )
-        
+            nextGenPool.append(self. _organisms[i].offspring(self._orgNum, i, dct))       #compute the next generation pool (of pairs (number of orgs, label) ) based on the fitness
         sumNextPool = 0
         
         for (num, label) in nextGenPool:                       #compute the total number of orgs in next gen pool
@@ -378,28 +460,33 @@ class Population:                        #contains the current population and st
             sumNextPool -= num
             totalRemaining -= currNum
             for i in range (0, currNum):
-                self._organisms.append(dct[label])
-       
+                org = dct[label]
+                org.mutate()                                     #mutate the offspring
+                self._organisms.append(org)
         for i in range (0, totalRemaining):                      #add the remaining ones
-        	self._organisms.append(dct[label])
-  
+        	org = dct[label]
+        	org.mutate()									     #mutate them
+        	self._organisms.append(org)          
         self._stats.updateStats()                                #update the stats for the new generation
         self._localStats.updateStats()
 
 
 class Simulator:  
-    def __init__(self, 
-                initial,         #the initial values given to each variable / initial genome
-                probability,     #the probability of a mutation
+    def __init__(self,
+    			probType,		 #the type of the problem solved (sat - 1, binary constraint - 2, general constraint - 3, wcsp definition - 4)
+                initial,         #the initial values given to each variable / initial genome, expressed as a position in the domain
+                probability,     #the probability of a mutation for each gene
                 rounds,          #the number of rounds to be considered
                 orgNum,          #the number of organisms
-                clauses):        #the list of clauses
-        self._initial = initial
-        self._probability = probability
+                constraints,     #the list of constraints
+                domains,         #the list of domains, with a domain for each variable
+                fitOffset):		 #the offset added to the fitness function
         self._rounds = rounds
-        self._orgNum = orgNum
-        self._clauses = clauses
-        self._population = Population(self._orgNum, self._clauses, self._probability, self._initial)
+        if(probType == 1 or probType == 2):
+        	domains = []
+        	for i in range (0, len(initial)):
+        		domains.append([0,1])     #for these problems (sat + binary constraint), define a binary domain
+        self._population = Population(orgNum, constraints, probability, initial, domains, fitOffset)
     
     def run(self):
         for i in range (0, self._rounds):
