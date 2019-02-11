@@ -6,6 +6,8 @@ import numpy as np
 import math
 import warnings
 from abc import ABCMeta, abstractmethod
+import networkx as nx
+from nxpd import draw
 
 class Constraint:
 	_metaclass_ = ABCMeta
@@ -16,7 +18,7 @@ class Constraint:
 	@abstractmethod
 	def getWeight(self): pass
 
-class Constraint1(Constraint):     #sat-clause constraint                    
+class ConstraintSat(Constraint):     #sat-clause constraint                    
     def __init__(self, elems, weight):
         self._elems = elems        #the elements in a clause
         self._weight = weight      #the weight for each clause
@@ -35,7 +37,7 @@ class Constraint1(Constraint):     #sat-clause constraint
     def getWeight(self):
         return self._weight
         
-class Constraint2unary(Constraint):         #unary constraint for the binary model
+class ConstraintBinaryModelUnary(Constraint):         #unary constraint for the binary model
     def __init__(self, elem, weight):
         self._elem = elem        	#the variable / gene to which it refers
         self._weight = weight       #the weight attributed to it
@@ -46,8 +48,14 @@ class Constraint2unary(Constraint):         #unary constraint for the binary mod
         return 0
     def getWeight(self):
         return max(0,self._weight)
+    def type(self):
+    	return "21"
+    def getElem(self):
+    	return self._elem
+    def getWeights(self):
+        return self._weight
     
-class Constraint2binaryType1(Constraint):         #binary constraint for the binary model, the first type
+class ConstraintBinaryModelBinaryDifferent(Constraint):         #binary constraint for the binary model, the first type
     def __init__(self, elems, weights):
         self._elems = elems        	  #the variables / genes to which it refers (an array of 2 elements)
         self._weights = weights       #the weights attributed to it (an array of 2 elements)
@@ -60,8 +68,14 @@ class Constraint2binaryType1(Constraint):         #binary constraint for the bin
         return 0
     def getWeight(self):
         return max(0,np.amax(self._weights))
+    def type(self):
+    	return "221"
+    def getElems(self):
+    	return self._elems
+    def getWeights(self):
+        return self._weights
         
-class Constraint2binaryType2(Constraint):         #binary constraint for the binary model, the second type
+class ConstraintBinaryModelBinarySame(Constraint):         #binary constraint for the binary model, the second type
     def __init__(self, elems, weights):
         self._elems = elems        	  #the variables / genes to which it refers (an array of 2 elements)
         self._weights = weights       #the weights attributed to it (an array of 2 elements)
@@ -74,8 +88,14 @@ class Constraint2binaryType2(Constraint):         #binary constraint for the bin
         return 0
     def getWeight(self):
         return max(0,np.amax(self._weights))
+    def type(self):
+        return "222"
+    def getElems(self):
+        return self._elems
+    def getWeights(self):
+        return self._weights
         
-class Constraint3(Constraint):					 #the most general constraint
+class ConstraintVCSP(Constraint):					 #the most general constraint
 	def __init__(self, elems, weightInfo):   	 #we are given elements and the weightInfo (a weight function and a maximum weight value that is used in the statistics)
 		self._elems = elems 					 #the variables / genes to which it refers (an array)
 		self._weightFunction = weightInfo[0]      #get the weight function
@@ -88,7 +108,7 @@ class Constraint3(Constraint):					 #the most general constraint
 	def getWeight(self):
 		return self._maxWeight
 
-class Constraint4(Constraint):					#the general wcsp
+class ConstraintWCSP(Constraint):					#the general wcsp
     def __init__(self, elems, weight):
         self._vars = elems[0]					#elems contains a tuple which shows the variables used and a list of elements that match the constraint
         self._relations = elems[1]
@@ -197,12 +217,7 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         self.plotNorm()
         plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
         plt.show()
-        plt.title("Selection coefficient statistics")
-        plt.xlabel("Rounds")
-        plt.ylabel("Selection coefficient")
         self.plotAvgSel()
-        plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
-        plt.show()
         
     def _fillPlot(self, extreme, middle):
         xs = [x[0] for x in extreme]  #fill between 2 lines
@@ -211,24 +226,70 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         plt.fill_between(xs, ys1, ys2, color = "royalblue")
     
     def plotAvgSel(self):
-        self._plotSelStat(self._avgSelList, "Average selection coefficient", "red")
-    
-    def _plotSelStat(self, statList, des, clr):     #plot the selection and fit the power law and exponential curves
-        xs = [x[0] for x in statList]
-        ys = [x[1] for x in statList]
         def expFunc(x, a, c, d):
-            return a*np.exp(-c*x)+d
-        popt, pcov = curve_fit(expFunc, xs, ys)
-        plt.plot(xs,ys, 'ro', label = des, color = clr)
-        yy = [expFunc(x, *popt) for x in xs]
-        plt.plot(xs,yy, label = "Exponential decay", color = "blue")
+            return a*np.exp(-c*x) + d
         def powFunc(x, m, c, c0):
             return c0 + x**m * c
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            popt, pcov = curve_fit(powFunc, xs, ys)
-            yy = [powFunc(x, *popt) for x in xs]
-        plt.plot(xs,yy, label = "Power law decay", color = "yellow")
+        self._plotSelStat(self._avgSelList, expFunc, "Exponential","Rounds", 0)
+        self._plotSelStat(self._avgSelList, powFunc, "Power law","Log rounds", 1)
+        
+    def getExpCoeff(self):
+        def expFunc(x, a, c, d):
+            return a*np.exp(-c*x) + d
+        xs = [x[0] for x in self._avgSelList]
+        ys = [x[1] for x in self._avgSelList]
+        popt = self._compCoeff(xs,ys,expFunc)
+        return popt[2]
+    
+    def getPowCoeff(self):
+        def powFunc(x, m, c, c0):
+            return c0 + x**m * c
+        xs = [x[0] for x in self._avgSelList]
+        ys = [x[1] for x in self._avgSelList]
+        popt = self._compCoeff(xs,ys,powFunc)
+        return popt[0]
+    
+    
+    def _compCoeff(self, xs, ys, func):
+        popt, pcov = curve_fit(func, xs, ys)
+        return popt
+    
+    def _plotSelStat(self, statList, func, desc1 , desc2, k):     #plot the selection and fit the power law and exponential curves
+        xs = [x[0] for x in statList]
+        ys = [x[1] for x in statList]
+        popt = self._compCoeff(xs,ys,func)
+        plt.title("Selection coefficient statistics")
+        plt.ylabel("Selection coefficient")
+        plt.xlabel("Rounds")
+        plt.plot(xs,ys, 'ro', label = "Average selection coefficient", color = "red")
+        yy = [func(x, *popt) for x in xs]
+        plt.plot(xs,yy, label = str(desc1) + " decay", color = "blue")
+        plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+        plt.show()
+        plt.title("Log selection coefficient statistics")
+        plt.ylabel("Log selection coefficient")
+        plt.xlabel(desc2)
+        d = popt[2]                            #compute the offset
+        mn = np.amin(ys)
+        if d > mn:
+            d = mn - 0.0000000001
+        yy = [np.log(y - d) for y in ys]
+        if k == 1:
+            xs = xs[1:]
+            yy = yy[1:]
+            xr = [np.log(x) for x in xs]
+            plt.plot(xr,yy, 'ro', label = "Average log selection coefficient minus offset", color = "red")
+            m,b = np.polyfit(xr,yy,1)
+            yr = [m * x + b for x in xr]
+            plt.plot(xr, yr, label = "Log " + str(desc1)+ " decay", color = "blue")
+        else:
+            plt.plot(xs,yy, 'ro', label = "Average log selection coefficient minus offset", color = "red")
+            m,b = np.polyfit(xs,yy,1)
+            yr = [m * x + b for x in xs]
+            plt.plot(xs, yr, label = "Log " + str(desc1)+ " decay", color = "blue")
+        plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+        plt.show()
+        
         
         
     def plotNorm(self):
@@ -482,6 +543,9 @@ class Simulator:
                 domains,         #the list of domains, with a domain for each variable
                 fitOffset):		 #the offset added to the fitness function
         self._rounds = rounds
+        self._constraints = constraints
+        self._genLength = len(initial)
+        self._probType = probType
         if(probType == 1 or probType == 2):
         	domains = []
         	for i in range (0, len(initial)):
@@ -496,3 +560,31 @@ class Simulator:
     	
     def printStatistics(self):
     	self._population.getStats().plotStats()
+        
+    def getExpCoeff(self):
+        return self._population.getLocalStats().getExpCoeff()
+    	
+    def plotConstraintGraph(self):
+        if self._probType != 2:
+            print("Constraint graph available only for binary constraints")
+            return nx.Graph()
+        else:
+            G = nx.Graph()
+            G.add_node(0)
+            draw(G, show = 'ipynb')
+            for v in range (0, self._genLength):
+                G.add_node(v)
+            for cons in self._constraints:
+                if cons.type() == "21":
+                    elem = cons.getElem()
+                    weight = cons.getWeights()
+                    G.add_edge(elem, elem, label = str(weight), color = 'green')
+                if cons.type() == "221":
+                    elems = cons.getElems()
+                    weights = cons.getWeights()
+                    G.add_edge(elems[0], elems[1], label = str(weights), color = 'blue')
+                if cons.type() == "221":
+                    elems = cons.getElems()
+                    weights = cons.getWeights()
+                    G.add_edge(elems[0], elems[1], label = str(weights), color = 'red')
+            return G
