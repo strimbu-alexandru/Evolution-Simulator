@@ -126,13 +126,14 @@ class ConstraintWCSP(Constraint):					#the general wcsp
         return self._weight
     
 class Organism:
-    def __init__(self, genome, constraints, prob, domains, fitOffset):    
+    def __init__(self, genome, constraints, prob, domains, fitOffset, mutType):    
         self._genome = genome
         self._domains = domains
         self._constraints = constraints
         self._fitOffset = fitOffset
         self._fitness = self._computeFitness()
         self._prob = prob
+        self._mutType = mutType
     
     def _computeFitness(self):
         solvedConstraints = 0
@@ -142,10 +143,22 @@ class Organism:
         return solvedConstraints + self._fitOffset         #fitness >= fitOffset (generally 1)
     
     def mutate(self):                        #triggers a mutation cycle where each gene can change with probability prob
-        varNum = len(self._genome)
-        for i in range(0, varNum) :
-            doMutation = np.random.binomial(1, self._prob[i], 1)    #do the mutation with the probability of the respective gene
-            if doMutation == 1:
+        if self._mutType == 0:
+            varNum = len(self._genome)
+            for i in range(0, varNum) :
+                doMutation = np.random.binomial(1, self._prob[i], 1)    #do the mutation with the probability of the respective gene
+                if doMutation == 1:
+                    domain = self._domains[i]
+                    x = 1
+                    domLen = len(domain)
+                    if domLen > 2:                                      #in this case, we have to decide to which value of the domain we mutate
+                        x = np.random.randint(1, domLen)                #sample an offset
+                    self._genome[i] = (x + self._genome[i]) % domLen
+        else:
+            doMutation = np.random.binomial(1, self._prob, 1)      #decide if we mutate or not
+            varNum = len(self._genome)
+            if doMutation == 1:                                   #if yes, choose a gene to mutate
+                i = np.random.randint(0, varNum)
                 domain = self._domains[i]
                 x = 1
                 domLen = len(domain)
@@ -153,11 +166,12 @@ class Organism:
                     x = np.random.randint(1, domLen)                #sample an offset
                 self._genome[i] = (x + self._genome[i]) % domLen
         self._fitness = self._computeFitness()
+                    
         
     def offspring(self, orgNum, label, dct):                    #returns the number of offspring and a label to identify their (common) genome
         myFitness = self._fitness               
         s = int(np.random.poisson(myFitness - 1, 1) + 1)   #draw a sample from Poisson distribution; we ensure that each organism has at least one offspring
-        dct[label] = Organism(self._genome.copy(), self._constraints, self._prob, self._domains, self._fitOffset);
+        dct[label] = Organism(self._genome.copy(), self._constraints, self._prob, self._domains, self._fitOffset, self._mutType);
         return (s, label)       
     
     def getFitness(self):
@@ -175,24 +189,28 @@ class Organism:
             for off in range (1, domLen):
                 newGenome = self._genome.copy()
                 newGenome[i] = (newGenome[i] + off) % domLen
-                res.append(Organism(newGenome, self._constraints, self._prob, self._domains, self._fitOffset))
+                res.append(Organism(newGenome, self._constraints, self._prob, self._domains, self._fitOffset, self._mutType))
         return res
 
 
 class LocalStatistics:     #computes local optimality statistics, regarding the fittest closest mutant
-    def __init__(self, population, maxPossibleFitness) :
+    def __init__(self, population, maxPossibleFitness, selOffset, genStat) :
         self._population = population
-        self._maxFitList = []      #fitness of the fittest mutant after each round
-        self._avgMutList = []      #average fitness of the possible mutants per round
-        self._avgFitterList = []   #average fitness of the possible mutants that have higher fitness per round
+        self._maxFitList = []      #delta fitness of the fittest mutant after each round
+        self._avgMutList = []      #average delta fitness of the possible mutants per round
+        self._avgFitterList = []   #average delta fitness of the possible mutants that have higher fitness per round
         self._maxPossibleFitness = maxPossibleFitness   #used to normalize fitness before plotting
         self._normList = []     #used to display the normalization equivalent
         self._neighbourData = {}
-        self._max5SelList = []
-        self._min5SelList = []
-        self._maxSelList = []
-        self._minSelList = []
-        self._avgSelList = []
+        #self._avgSelListOld = []
+        #self._avgSelListFitAvg = []
+        self._avgSelListFitterAvg = []
+        self._errorSelListFitterAvg = []
+        self._avgSelListFittestAvg = []
+        self._errorSelListFittestAvg = []
+        self._selOffset = selOffset
+        self._genStat = genStat
+        #self._avgSelListOld50Per = []
         
     def updateStats(self) :
         rnd = self._population.getRound()
@@ -203,8 +221,23 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         self._avgMutList.append((rnd, avgMut))
         self._avgFitterList.append((rnd, avgFitter))
         self._normList.append((rnd, 1 / self._maxPossibleFitness))
-        avgSel = self._computeSelection(roundNeighbourData)  #compute the selection coefficients statistics
-        self._avgSelList.append((rnd, avgSel))
+        #avgSelOld = self._computeSelectionOld(roundNeighbourData)  #compute the selection coefficients statistics
+        #self._avgSelListOld.append((rnd, avgSelOld))
+        #if rnd >= self._selOffset:
+        #    avgSelFitAvg = self._computeSelectionFitAvg()
+        #    self._avgSelListFitAvg.append((rnd, avgSelFitAvg))
+        fitterRes = self._computeSelectionFitterAvg(roundNeighbourData)
+        avgSelFitterAvg = fitterRes[0]
+        errorSelFitter = fitterRes[1]
+        self._avgSelListFitterAvg.append((rnd, avgSelFitterAvg))
+        self._errorSelListFitterAvg.append((rnd, errorSelFitter))
+        fittestRes = self._computeSelectionFittestAvg(roundNeighbourData)
+        avgSelFittestAvg = fittestRes[0]
+        errorSelFittest = fitterRes[1]
+        self._avgSelListFittestAvg.append((rnd, avgSelFittestAvg))
+        self._errorSelListFittestAvg.append((rnd, errorSelFittest))
+        #avgSelOld50Per = self._computeSelectionOld50Per(roundNeighbourData)
+        #self._avgSelListOld50Per.append((rnd, avgSelOld50Per))
      
         
     def plotStats(self):     #plot all the stats so far; each stat can also be plotted separately
@@ -226,67 +259,87 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         plt.fill_between(xs, ys1, ys2, color = "royalblue")
     
     def plotAvgSel(self):
-        def expFunc(x, a, c, d):
-            return a*np.exp(-c*x) + d
+        def expFunc(x, a, c):
+            return a*np.exp(-c*x)
         def powFunc(x, m, c, c0):
             return c0 + x**m * c
-        self._plotSelStat(self._avgSelList, expFunc, "Exponential","Rounds", 0)
-        self._plotSelStat(self._avgSelList, powFunc, "Power law","Log rounds", 1)
+        #self._plotSelStat(self._avgSelListOld, expFunc, "Exponential","Rounds", 0, "Local selection coefficient statistics")
+        #self._plotSelStat(self._avgSelListOld, powFunc, "Power law","Log rounds", 1, "Local selection coefficient statistics")
+        #self._plotSelStat(self._avgSelListFitAvg, expFunc, "Exponential","Rounds", 0, "Average fitness selection coefficient statistics")
+        #self._plotSelStat(self._avgSelListFitAvg, powFunc, "Power law","Log rounds", 1, "Average fitness selection coefficient statistics")
+        self._plotSelStat(self._avgSelListFitterAvg, self._errorSelListFitterAvg, expFunc, "Exponential","Rounds", 0, "Average fitter selection coefficient statistics")
+        #self._plotSelStat(self._avgSelListFitterAvg, powFunc, "Power law","Log rounds", 1, "Average fitter selection coefficient statistics")
+        self._plotSelStat(self._avgSelListFittestAvg, self._errorSelListFittestAvg, expFunc, "Exponential","Rounds", 0, "Average fittest selection coefficient statistics")
+        #self._plotSelStat(self._avgSelListFittestAvg, powFunc, "Power law","Log rounds", 1, "Average fittest selection coefficient statistics")
+        #self._plotSelStat(self._avgSelListOld50Per, expFunc, "Exponential","Rounds", 0, "Local 50% selection coefficient statistics")
+        #self._plotSelStat(self._avgSelListOld50Per, powFunc, "Power law","Log rounds", 1, "Local 50% selection coefficient statistics")
         
     def getExpCoeff(self):
-        def expFunc(x, a, c, d):
-            return a*np.exp(-c*x) + d
-        xs = [x[0] for x in self._avgSelList]
-        ys = [x[1] for x in self._avgSelList]
+        def expFunc(x, a, c):
+            return a*np.exp(-c*x)
+        xs = [x[0] for x in self._avgSelListFitterAvg]
+        ys = [x[1] for x in self._avgSelListFitterAvg]
         popt = self._compCoeff(xs,ys,expFunc)
-        return popt[2]
+        error = 0
+        for (x,y) in zip(xs,ys):
+            error += (y - expFunc(x, *popt))**2
+        error = error / (2 * len(ys))
+        return (popt[1],error)
     
     def getPowCoeff(self):
         def powFunc(x, m, c, c0):
             return c0 + x**m * c
-        xs = [x[0] for x in self._avgSelList]
-        ys = [x[1] for x in self._avgSelList]
+        xs = [x[0] for x in self._avgSelListFitterAvg]
+        ys = [x[1] for x in self._avgSelListFitterAvg]
         popt = self._compCoeff(xs,ys,powFunc)
         return popt[0]
     
     
-    def _compCoeff(self, xs, ys, func):
-        popt, pcov = curve_fit(func, xs, ys)
+    def _compCoeff(self, xs, ys, func, sigma = None):
+        popt, pcov = curve_fit(func, xs, ys, sigma = sigma, absolute_sigma=True)
         return popt
     
-    def _plotSelStat(self, statList, func, desc1 , desc2, k):     #plot the selection and fit the power law and exponential curves
+    def _plotSelStat(self, statList, errorList, func, desc1 , desc2, k, title):     #plot the selection and fit the power law and exponential curves
         xs = [x[0] for x in statList]
         ys = [x[1] for x in statList]
-        popt = self._compCoeff(xs,ys,func)
-        plt.title("Selection coefficient statistics")
+        yerr = [x[1] for x in errorList]
+        popt = self._compCoeff(xs,ys,func,[max(x,0.001) for x in yerr])
+        plt.figure(figsize=(15,10))
+        plt.title(title)
         plt.ylabel("Selection coefficient")
         plt.xlabel("Rounds")
-        plt.plot(xs,ys, 'ro', label = "Average selection coefficient", color = "red")
+        plt.errorbar(xs,ys, label = "Average selection coefficient", color = "red",markersize=5, yerr = yerr, barsabove = True, fmt = 'ro')
         yy = [func(x, *popt) for x in xs]
         plt.plot(xs,yy, label = str(desc1) + " decay", color = "blue")
         plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
         plt.show()
-        plt.title("Log selection coefficient statistics")
+        plt.title("Error")
+        plt.ylabel("Error values")
+        plt.xlabel("Rounds")
+        plt.plot(xs,yerr, 'ro', label = "error")
+        plt.show()
+        plt.title(title)
         plt.ylabel("Log selection coefficient")
         plt.xlabel(desc2)
-        d = popt[2]                            #compute the offset
-        mn = np.amin(ys)
-        if d > mn:
-            d = mn - 0.0000000001
-        yy = [np.log(y - d) for y in ys]
+        #d = popt[2]
+        #print(d)
+        
         if k == 1:
-            xs = xs[1:]
-            yy = yy[1:]
-            xr = [np.log(x) for x in xs]
-            plt.plot(xr,yy, 'ro', label = "Average log selection coefficient minus offset", color = "red")
-            m,b = np.polyfit(xr,yy,1)
-            yr = [m * x + b for x in xr]
-            plt.plot(xr, yr, label = "Log " + str(desc1)+ " decay", color = "blue")
+            res = [(np.log(x), np.log(y)) for (x,y) in filter(lambda t: t[0] > 0 and t[1] > 0, zip(xs, ys))]
+            xr = [x[0] for x in res]
+            yr = [x[1] for x in res]
+            plt.plot(xr,yr, 'ro', label = "Average log selection coefficient", color = "red")
+            #m,b = np.polyfit(xr,yy,1)
+            #yr = [m * x + b for x in xr]
+            #plt.plot(xr, yr, label = "Log " + str(desc1)+ " decay", color = "blue")
         else:
-            plt.plot(xs,yy, 'ro', label = "Average log selection coefficient minus offset", color = "red")
-            m,b = np.polyfit(xs,yy,1)
-            yr = [m * x + b for x in xs]
-            plt.plot(xs, yr, label = "Log " + str(desc1)+ " decay", color = "blue")
+            res = [(x, np.log(y)) for (x,y) in filter(lambda t: t[1] > 0, zip(xs, ys))]
+            xr = [x[0] for x in res]
+            yr = [x[1] for x in res]
+            plt.plot(xr,yr, 'ro', label = "Average log selection coefficient", color = "red")
+            #m,b = np.polyfit(xs,yy,1)
+            #yr = [m * x + b for x in xs]
+            #plt.plot(xs, yr, label = "Log " + str(desc1)+ " decay", color = "blue")
         plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
         plt.show()
         
@@ -315,34 +368,117 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         nAvgMut = 0
         sAvgFitter = 0
         nAvgFitter = 0
+        
         for org in self._population.getOrganisms():
             mutantsDeltaFitness = []
             mutants = org.computeMutants()
+            maxFit = 0
+            sAvgFitterRaw = 0   #non-delta, computed for each organism
+            nAvgFitterRaw = 0
             for x in mutants:
-                dFit = x.getFitness() - org.getFitness()
+                xFit = x.getFitness()
+                dFit = xFit - org.getFitness()
                 mutantsDeltaFitness.append(dFit)
+                if xFit > maxFit:
+                    maxFit = xFit
                 if dFit > maxDFit:
                     maxDFit = dFit
                 sAvgMut += dFit
                 nAvgMut += 1
                 if dFit > 0:    #fitter than its parent
+                    nAvgFitterRaw += 1
+                    sAvgFitterRaw += xFit
                     sAvgFitter += dFit
                     nAvgFitter += 1
-            roundNeighbourData[org] = (org.getFitness(), mutantsDeltaFitness)  #compute the neighbour data for for the current round
+            fit = org.getFitness()
+            if maxFit == 0:
+            	maxFit = fit
+            if nAvgFitterRaw == 0:
+            	nAvgFitterRaw = 1
+            	sAvgFitterRaw = fit
+            roundNeighbourData[org] = (fit, mutantsDeltaFitness, maxFit, sAvgFitterRaw / nAvgFitterRaw)  #compute the neighbour data for the current round
         if nAvgFitter == 0:
             nAvgFitter = 1
         return (maxDFit, sAvgMut / nAvgMut, sAvgFitter / nAvgFitter)
                                 
-    def _computeSelection(self, roundNeighbourData):
-        selection = []
-        for org in self._population.getOrganisms():
-            (fit, mutDeltaFit) = roundNeighbourData[org]
-            maxMutDeltaFit = max(mutDeltaFit)
-            selection.append(maxMutDeltaFit / fit)     #compute the selection coefficient
-        selection.sort()
-        avgSel = np.mean(selection)
-        return avgSel
+    #def _computeSelectionOld(self, roundNeighbourData):
+    #    selection = []
+    #    for org in self._population.getOrganisms():
+    #        (fit, mutDeltaFit) = roundNeighbourData[org]
+    #        maxMutDeltaFit = max(np.amax(mutDeltaFit),0)
+    #        selection.append(maxMutDeltaFit / fit)     #compute the selection coefficient
+    #    selection.sort()
+    #    avgSel = np.mean(selection)
+    #    return avgSel
         
+    #def _computeSelectionOld50Per(self, roundNeighbourData):
+    #    selection = []
+    #    orgs = self._population.getOrganisms()
+    #    orgs = sorted(orgs, key = lambda org : -org.getFitness())
+    #    n = len(orgs)
+    #    orgs = orgs[:int(n - n / 2)]
+    #    for org in self._population.getOrganisms():
+    #        (fit, mutDeltaFit) = roundNeighbourData[org]
+    #        maxMutDeltaFit = max(np.amax(mutDeltaFit),0)
+    #        selection.append(maxMutDeltaFit / fit)     #compute the selection coefficient
+    #    selection.sort()
+    #    avgSel = np.mean(selection)
+    #    return avgSel
+        
+    #def _computeSelectionFitAvg(self):
+    #    k = self._selOffset                      #number of steps that we look ahead
+    #    rnd = self._population.getRound()
+    #    avgFit = self._genStat.getAvgFitRaw()
+    #    sel = (max(avgFit[rnd] - avgFit[rnd - k], 0)) / avgFit[rnd - k]
+    #    return sel
+
+    def _computeError(self, a, b, sa, sb, sab):
+        return np.abs(a / b) * np.sqrt((sa / a) * (sa / a) + (sb / b) * (sb / b) - 2 * (sab) / (a * b))
+    
+    def _computeSelectionFitterAvg(self, roundNeighbourData):
+        rnd = self._population.getRound()
+        orgFit = []
+        orgAvgFitter = []
+        n = 0
+        for org in self._population.getOrganisms():
+            (fit, mutDFit, maxFit, avgFitter) = roundNeighbourData[org] 
+            orgFit.append(fit)
+            orgAvgFitter.append(avgFitter)
+            n += 1
+        sdFit = np.std(orgFit, ddof = 1)            #standard deviation of orgFit
+        sdFitter = np.std(orgAvgFitter, ddof = 1)   #standard deviation of orgAvgFitter
+        sdAvgFit = sdFit / (np.sqrt(n - 1))         #standard deviation of the mean of orgFit
+        sdAvgFitter = sdFitter / (np.sqrt(n - 1))   #standard deviation of the mean of of orgAvgFitter
+        avgFit = np.mean(orgFit)                    #mean of orgFit
+        avgFitter = np.mean(orgAvgFitter)           #mean of orgAVgFitter
+        covFitFitter = np.cov([orgFit,orgAvgFitter], ddof = 1)           #covariance between orgFit and orgAvgFitter
+        covAvgFitFitter = 1 / (n - 1) * covFitFitter                    #covariance between the means                 
+        sel = (max(avgFitter - avgFit,0)) / avgFit
+        err = self._computeError(avgFitter, avgFit, sdAvgFitter, sdAvgFit, covAvgFitFitter[0][1])
+        return (sel, err)
+        
+    def _computeSelectionFittestAvg(self, roundNeighbourData):
+        rnd = self._population.getRound()
+        orgFit = []
+        orgFittest = []
+        n = 0
+        for org in self._population.getOrganisms():
+            (fit, mutDFit, maxFit, avgFitter) = roundNeighbourData[org] 
+            orgFit.append(fit)
+            orgFittest.append(maxFit)
+            n += 1
+        sdFit = np.std(orgFit, ddof = 1)             #standard deviation of orgFit
+        sdFittest = np.std(orgFittest, ddof = 1)   #standard deviation of orgFittest
+        sdAvgFit = sdFit / (np.sqrt(n - 1))          #standard deviation of the mean of orgFit
+        sdAvgFittest = sdFittest / (np.sqrt(n - 1))  #standard deviation of the mean of of orgFittest
+        avgFittest = np.mean(orgFittest)                #mean of orgFittest
+        avgFit = np.mean(orgFit)                     #mean of orgFit
+        covFitFittest = np.cov(orgFit, orgFittest, ddof = 1)           #covariance between orgFit and orgFittest
+        covAvgFitFittest = 1 / (n - 1) * covFitFittest                 #covariance between the means   
+        sel = (max(avgFittest - avgFit,0)) / avgFit
+        err = self._computeError(avgFittest, avgFit, sdAvgFittest, sdAvgFit, covAvgFitFittest[0][1])
+        return (sel, err)
+    
                                 
     def getNeighbourData(self):
         return self._neighbourData;    #this contains the local data (neighbour data) for a round, and organism, its fitness and its possible mutants fitness
@@ -356,6 +492,7 @@ class Statistics:                       #contains all the statistics and methods
     def __init__(self, population, maxPossibleFitness, orgNum) :
         self._population = population
         self._avgFitList = []
+        self._avgFitRaw = []   #unnormalized fitness
         self._maxFitList = []
         self._minFitList = []
         self._max5PerFitList = []
@@ -365,11 +502,13 @@ class Statistics:                       #contains all the statistics and methods
         
     def updateStats(self):
         rnd = self._population.getRound()
-        self._avgFitList.append((rnd, self._computeAvgFit() / self._maxPossibleFitness))
+        avgFit = self._computeAvgFit()
+        self._avgFitRaw.append(avgFit)
+        self._avgFitList.append((rnd, avgFit / self._maxPossibleFitness))
         self._maxFitList.append((rnd, self._computeMaxFit() / self._maxPossibleFitness))
         self._minFitList.append((rnd, self._computeMinFit() / self._maxPossibleFitness))
-        self._max5PerFitList.append((rnd, self._computeMax5PerFit() / self._maxPossibleFitness))
-        self._min5PerFitList.append((rnd, self._computeMin5PerFit() / self._maxPossibleFitness))
+        self._max5PerFitList.append((rnd, self._computeMaxPerFit(5) / self._maxPossibleFitness))
+        self._min5PerFitList.append((rnd, self._computeMinPerFit(5) / self._maxPossibleFitness))
         
         
     def plotStats(self):     #plot all the stats so far; each stat can also be plotted separately
@@ -437,26 +576,28 @@ class Statistics:                       #contains all the statistics and methods
                 minFit = fit
         return minFit
     
-    def _computeMin5PerFit(self):
+    def _computeMinPerFit(self, per):
+        per = per / 100
         orgs = self._population.getOrganisms()
         fit = []
         for i in range(0, self._orgNum):
             fit.append(orgs[i].getFitness())
         fit.sort()
-        l = int(math.ceil(len(fit) * 0.05))      #get only the first 5%
+        l = int(math.ceil(len(fit) * per))      #get only the first 5%
         fit = fit[:l]
         s = 0
         for x in fit:                            #compute the average of it
             s += x
         return s / l
     
-    def _computeMax5PerFit(self):
+    def _computeMaxPerFit(self, per):
+        per = per / 100
         orgs = self._population.getOrganisms()
         fit = []
         for i in range(0, self._orgNum):
             fit.append(orgs[i].getFitness())
         fit.sort(reverse = True)
-        l = int(math.ceil(len(fit) * 0.05))      #get only the first 5% (biggest 5%)
+        l = int(math.ceil(len(fit) * per))      #get only the first 5% (biggest 5%)
         fit = fit[:l]
         s = 0
         for x in fit:                            #compute the average of it
@@ -467,10 +608,13 @@ class Statistics:                       #contains all the statistics and methods
         orgs = self._population.getOrganisms()
         for org in orgs:
             print(str(org.getFitness()) + "   " + str(org.getGenome()))
+            
+    def getAvgFitRaw(self):
+    	return self._avgFitRaw
 
 
 class Population:                        #contains the current population and statistics; is updated on nextGeneration call
-    def __init__(self, orgNum, constraints, prob, initial, domains, fitOffset):
+    def __init__(self, orgNum, constraints, prob, initial, domains, fitOffset, mutType):
         self._orgNum = orgNum
         self._constraints = constraints
         self._organisms = []
@@ -481,10 +625,10 @@ class Population:                        #contains the current population and st
             self._maxPossibleFitness += x.getWeight()
 
         self._stats = Statistics(self, self._maxPossibleFitness, self._orgNum)
-        self._localStats = LocalStatistics(self, self._maxPossibleFitness)    
+        self._localStats = LocalStatistics(self, self._maxPossibleFitness, 3, self._stats)    
 
         for i in range(0, self._orgNum):
-            self._organisms.append(Organism(initial, self._constraints, prob, domains, fitOffset))
+            self._organisms.append(Organism(initial, self._constraints, prob, domains, fitOffset, mutType))
         self._stats.updateStats()
         self._localStats.updateStats()
 
@@ -541,7 +685,8 @@ class Simulator:
                 orgNum,          #the number of organisms
                 constraints,     #the list of constraints
                 domains,         #the list of domains, with a domain for each variable
-                fitOffset):		 #the offset added to the fitness function
+                fitOffset,		 #the offset added to the fitness function
+                mutType):        #the type of mutations implemented
         self._rounds = rounds
         self._constraints = constraints
         self._genLength = len(initial)
@@ -550,7 +695,7 @@ class Simulator:
         	domains = []
         	for i in range (0, len(initial)):
         		domains.append([0,1])     #for these problems (sat + binary constraint), define a binary domain
-        self._population = Population(orgNum, constraints, probability, initial, domains, fitOffset)
+        self._population = Population(orgNum, constraints, probability, initial, domains, fitOffset, mutType)
     
     def run(self):
         for i in range (0, self._rounds):
@@ -583,8 +728,19 @@ class Simulator:
                     elems = cons.getElems()
                     weights = cons.getWeights()
                     G.add_edge(elems[0], elems[1], label = str(weights), color = 'blue')
-                if cons.type() == "221":
+                if cons.type() == "222":
                     elems = cons.getElems()
                     weights = cons.getWeights()
                     G.add_edge(elems[0], elems[1], label = str(weights), color = 'red')
             return G
+    
+    def writeRunDataToFile(self, f):
+        stats = self._population.getStats()
+        localStats = self._population.getLocalStats()
+        f.write("Fitness:\n")
+        f.write(str(stats._avgFitList))
+        f.write("\n")
+        f.write("Selection coefficient:\n")
+        f.write(str(localStats._avgSelListFitterAvg))
+        f.write("\n")
+        f.write("\n")
