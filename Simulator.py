@@ -171,7 +171,8 @@ class Organism:
     def offspring(self, orgNum, label, dct):                    #returns the number of offspring and a label to identify their (common) genome
         myFitness = self._fitness               
         s = int(np.random.poisson(myFitness - 1, 1) + 1)   #draw a sample from Poisson distribution; we ensure that each organism has at least one offspring
-        dct[label] = Organism(self._genome.copy(), self._constraints, self._prob, self._domains, self._fitOffset, self._mutType);
+        #s = myFitness
+        dct[label] = Organism(self._genome.copy(), self._constraints, self._prob, self._domains, self._fitOffset, self._mutType)
         return (s, label)       
     
     def getFitness(self):
@@ -447,12 +448,12 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
             n += 1
         sdFit = np.std(orgFit, ddof = 1)            #standard deviation of orgFit
         sdFitter = np.std(orgAvgFitter, ddof = 1)   #standard deviation of orgAvgFitter
-        sdAvgFit = sdFit / (np.sqrt(n - 1))         #standard deviation of the mean of orgFit
-        sdAvgFitter = sdFitter / (np.sqrt(n - 1))   #standard deviation of the mean of of orgAvgFitter
+        sdAvgFit = sdFit / (np.sqrt(n))         #standard deviation of the mean of orgFit
+        sdAvgFitter = sdFitter / (np.sqrt(n))   #standard deviation of the mean of of orgAvgFitter
         avgFit = np.mean(orgFit)                    #mean of orgFit
         avgFitter = np.mean(orgAvgFitter)           #mean of orgAVgFitter
         covFitFitter = np.cov([orgFit,orgAvgFitter], ddof = 1)           #covariance between orgFit and orgAvgFitter
-        covAvgFitFitter = 1 / (n - 1) * covFitFitter                    #covariance between the means                 
+        covAvgFitFitter = 1 / (n) * covFitFitter                    #covariance between the means                 
         sel = (max(avgFitter - avgFit,0)) / avgFit
         err = self._computeError(avgFitter, avgFit, sdAvgFitter, sdAvgFit, covAvgFitFitter[0][1])
         return (sel, err)
@@ -469,12 +470,12 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
             n += 1
         sdFit = np.std(orgFit, ddof = 1)             #standard deviation of orgFit
         sdFittest = np.std(orgFittest, ddof = 1)   #standard deviation of orgFittest
-        sdAvgFit = sdFit / (np.sqrt(n - 1))          #standard deviation of the mean of orgFit
-        sdAvgFittest = sdFittest / (np.sqrt(n - 1))  #standard deviation of the mean of of orgFittest
+        sdAvgFit = sdFit / (np.sqrt(n))          #standard deviation of the mean of orgFit
+        sdAvgFittest = sdFittest / (np.sqrt(n))  #standard deviation of the mean of of orgFittest
         avgFittest = np.mean(orgFittest)                #mean of orgFittest
         avgFit = np.mean(orgFit)                     #mean of orgFit
         covFitFittest = np.cov(orgFit, orgFittest, ddof = 1)           #covariance between orgFit and orgFittest
-        covAvgFitFittest = 1 / (n - 1) * covFitFittest                 #covariance between the means   
+        covAvgFitFittest = 1 / (n) * covFitFittest                 #covariance between the means   
         sel = (max(avgFittest - avgFit,0)) / avgFit
         err = self._computeError(avgFittest, avgFit, sdAvgFittest, sdAvgFit, covAvgFitFittest[0][1])
         return (sel, err)
@@ -668,12 +669,20 @@ class Population:                        #contains the current population and st
                 org = dct[label]
                 org.mutate()                                     #mutate the offspring
                 self._organisms.append(org)
+        (num, label) = nextGenPool[-1]
         for i in range (0, totalRemaining):                      #add the remaining ones
         	org = dct[label]
         	org.mutate()									     #mutate them
         	self._organisms.append(org)          
         self._stats.updateStats()                                #update the stats for the new generation
         self._localStats.updateStats()
+
+    def computeDistribution(self):
+        distrib = {}
+        for org in self._organisms:
+            fit = org.getFitness()
+            distrib[fit] = distrib.get(fit, 0) + 1
+        return distrib
 
 
 class Simulator:  
@@ -686,19 +695,23 @@ class Simulator:
                 constraints,     #the list of constraints
                 domains,         #the list of domains, with a domain for each variable
                 fitOffset,		 #the offset added to the fitness function
-                mutType):        #the type of mutations implemented
+                mutType,         #the type of mutations implemented
+                getDistrib = False):     #true, if we want the distributions to be computed
         self._rounds = rounds
         self._constraints = constraints
         self._genLength = len(initial)
         self._probType = probType
+        self._distrib = []
+        self._getDistrib = getDistrib
         if(probType == 1 or probType == 2):
         	domains = []
         	for i in range (0, len(initial)):
         		domains.append([0,1])     #for these problems (sat + binary constraint), define a binary domain
         self._population = Population(orgNum, constraints, probability, initial, domains, fitOffset, mutType)
-    
     def run(self):
         for i in range (0, self._rounds):
+            if self._getDistrib:
+                self._distrib.append(self._population.computeDistribution())
             self._population.nextGeneration()    
     def printLocalStatistics(self):
     	self._population.getLocalStats().plotStats()
@@ -744,3 +757,8 @@ class Simulator:
         f.write(str(localStats._avgSelListFitterAvg))
         f.write("\n")
         f.write("\n")
+    
+    def getDistribution(self):
+        if not self._getDistrib:
+            print("Distribution by fitness not computed!")
+        return self._distrib
