@@ -195,13 +195,14 @@ class Organism:
 
 
 class LocalStatistics:     #computes local optimality statistics, regarding the fittest closest mutant
-    def __init__(self, population, maxPossibleFitness, selOffset, genStat) :
+    def __init__(self, population, maxPossibleFitness, selOffset, genStat, maxGenome) :
         self._population = population
         self._maxFitList = []      #delta fitness of the fittest mutant after each round
         self._avgMutList = []      #average delta fitness of the possible mutants per round
         self._avgFitterList = []   #average delta fitness of the possible mutants that have higher fitness per round
         self._maxPossibleFitness = maxPossibleFitness   #used to normalize fitness before plotting
         self._normList = []     #used to display the normalization equivalent
+        self._maxGenome = maxGenome  #used to compute the distance to the peak; if None, then do not compute this statistic
         self._neighbourData = {}
         #self._avgSelListOld = []
         #self._avgSelListFitAvg = []
@@ -211,17 +212,22 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         self._errorSelListFittestAvg = []
         self._selOffset = selOffset
         self._genStat = genStat
+        self._avgDistToMaxList = []
+        self._minDistToMaxList = []
         #self._avgSelListOld50Per = []
         
     def updateStats(self) :
         rnd = self._population.getRound()
         roundNeighbourData = {}
-        (maxDFit, avgMut, avgFitter) = self._computeStats(roundNeighbourData)
+        (maxDFit, avgMut, avgFitter, avgDistToMax, minDistToMax) = self._computeStats(roundNeighbourData)
         self._neighbourData[rnd] = roundNeighbourData
         self._maxFitList.append((rnd, maxDFit))
         self._avgMutList.append((rnd, avgMut))
         self._avgFitterList.append((rnd, avgFitter))
         self._normList.append((rnd, 1 / self._maxPossibleFitness))
+        if self._maxGenome != None:
+            self._avgDistToMaxList.append((rnd,avgDistToMax))
+            self._minDistToMaxList.append((rnd, minDistToMax))
         #avgSelOld = self._computeSelectionOld(roundNeighbourData)  #compute the selection coefficients statistics
         #self._avgSelListOld.append((rnd, avgSelOld))
         #if rnd >= self._selOffset:
@@ -251,6 +257,14 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         self.plotNorm()
         plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
         plt.show()
+        if self._maxGenome != None:
+            plt.title("Distance to peak")
+            plt.xlabel("Rounds")
+            plt.ylabel('Distance')
+            self.plotAvgDistToMax()
+            self.plotMinDistToMax()
+            plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
+            plt.show()
         self.plotAvgSel()
         
     def _fillPlot(self, extreme, middle):
@@ -320,6 +334,8 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         plt.plot(xs,yerr, 'ro', label = "error")
         plt.show()
         plt.title(title)
+        #axes = plt.gca()
+        #axes.set_ylim([-8,5])
         plt.ylabel("Log selection coefficient")
         plt.xlabel(desc2)
         #d = popt[2]
@@ -343,8 +359,12 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
             #plt.plot(xs, yr, label = "Log " + str(desc1)+ " decay", color = "blue")
         plt.legend(bbox_to_anchor=(1.04,1), loc="upper left")
         plt.show()
-        
-        
+
+    def plotMinDistToMax(self):
+        self._plotStat(self._minDistToMaxList, "Minimum distance to peak", '-')
+      
+    def plotAvgDistToMax(self):
+        self._plotStat(self._avgDistToMaxList, "Average distance to peak", '-')
         
     def plotNorm(self):
         self._plotStat(self._normList, "Normalization value", '--')
@@ -363,14 +383,30 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         ys = [x[1] for x in statList]
         plt.plot(xs, ys, lineType, label = des)
         
+    def _computeDiff(self, a, b):
+        n = len(a)
+        s = 0
+        for i in range(n):
+            if a[i] != b[i]:
+                s += 1
+        return s
+
     def _computeStats(self, roundNeighbourData):
-        maxDFit = 0
+        maxDFit = 0   #max delta fitness
         sAvgMut = 0
         nAvgMut = 0
         sAvgFitter = 0
         nAvgFitter = 0
+        totalDistToMax = 0
+        minDistToMax = 1000000
+        numArgs = 0
         
         for org in self._population.getOrganisms():
+            if self._maxGenome != None:
+                diff = self._computeDiff(org.getGenome(), self._maxGenome)
+                totalDistToMax += diff
+                if diff < minDistToMax:
+                    minDistToMax = diff
             mutantsDeltaFitness = []
             mutants = org.computeMutants()
             maxFit = 0
@@ -398,9 +434,10 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
             	nAvgFitterRaw = 1
             	sAvgFitterRaw = fit
             roundNeighbourData[org] = (fit, mutantsDeltaFitness, maxFit, sAvgFitterRaw / nAvgFitterRaw)  #compute the neighbour data for the current round
+            numArgs += 1
         if nAvgFitter == 0:
             nAvgFitter = 1
-        return (maxDFit, sAvgMut / nAvgMut, sAvgFitter / nAvgFitter)
+        return (maxDFit, sAvgMut / nAvgMut, sAvgFitter / nAvgFitter, totalDistToMax / numArgs, minDistToMax)
                                 
     #def _computeSelectionOld(self, roundNeighbourData):
     #    selection = []
@@ -451,7 +488,7 @@ class LocalStatistics:     #computes local optimality statistics, regarding the 
         sdAvgFit = sdFit / (np.sqrt(n))         #standard deviation of the mean of orgFit
         sdAvgFitter = sdFitter / (np.sqrt(n))   #standard deviation of the mean of of orgAvgFitter
         avgFit = np.mean(orgFit)                    #mean of orgFit
-        avgFitter = np.mean(orgAvgFitter)           #mean of orgAVgFitter
+        avgFitter = np.mean(orgAvgFitter)           #mean of orgAvgFitter
         covFitFitter = np.cov([orgFit,orgAvgFitter], ddof = 1)           #covariance between orgFit and orgAvgFitter
         covAvgFitFitter = 1 / (n) * covFitFitter                    #covariance between the means                 
         sel = (max(avgFitter - avgFit,0)) / avgFit
@@ -513,6 +550,8 @@ class Statistics:                       #contains all the statistics and methods
         
         
     def plotStats(self):     #plot all the stats so far; each stat can also be plotted separately
+        axes = plt.gca()
+        axes.set_ylim([0,1])
         plt.title("General fitness statistics")
         plt.xlabel("Rounds")
         plt.ylabel("Normalized fitness")
@@ -613,9 +652,21 @@ class Statistics:                       #contains all the statistics and methods
     def getAvgFitRaw(self):
     	return self._avgFitRaw
 
+    def getAvgFit(self):
+        resAvgFit = []
+        for (rnd, avg) in self._avgFitList:
+            resAvgFit.append(avg)
+        return resAvgFit
+
+    def getMaxFit(self):
+        resMaxFit = []
+        for (rnd, max) in self._maxFitList:
+            resMaxFit.append(max)
+        return resMaxFit
+
 
 class Population:                        #contains the current population and statistics; is updated on nextGeneration call
-    def __init__(self, orgNum, constraints, prob, initial, domains, fitOffset, mutType):
+    def __init__(self, orgNum, constraints, prob, initial, domains, fitOffset, mutType, maxGenome):
         self._orgNum = orgNum
         self._constraints = constraints
         self._organisms = []
@@ -626,7 +677,7 @@ class Population:                        #contains the current population and st
             self._maxPossibleFitness += x.getWeight()
 
         self._stats = Statistics(self, self._maxPossibleFitness, self._orgNum)
-        self._localStats = LocalStatistics(self, self._maxPossibleFitness, 3, self._stats)    
+        self._localStats = LocalStatistics(self, self._maxPossibleFitness, 3, self._stats, maxGenome)    
 
         for i in range(0, self._orgNum):
             self._organisms.append(Organism(initial, self._constraints, prob, domains, fitOffset, mutType))
@@ -696,7 +747,8 @@ class Simulator:
                 domains,         #the list of domains, with a domain for each variable
                 fitOffset,		 #the offset added to the fitness function
                 mutType,         #the type of mutations implemented
-                getDistrib = False):     #true, if we want the distributions to be computed
+                getDistrib = False,     #true, if we want the distributions to be computed
+                maxGenome = None):      #used to compute the distance to the peak
         self._rounds = rounds
         self._constraints = constraints
         self._genLength = len(initial)
@@ -707,7 +759,7 @@ class Simulator:
         	domains = []
         	for i in range (0, len(initial)):
         		domains.append([0,1])     #for these problems (sat + binary constraint), define a binary domain
-        self._population = Population(orgNum, constraints, probability, initial, domains, fitOffset, mutType)
+        self._population = Population(orgNum, constraints, probability, initial, domains, fitOffset, mutType, maxGenome)
     def run(self):
         for i in range (0, self._rounds):
             if self._getDistrib:
@@ -762,3 +814,9 @@ class Simulator:
         if not self._getDistrib:
             print("Distribution by fitness not computed!")
         return self._distrib
+
+    def getAvgFit(self):
+        return self._population.getStats().getAvgFit()
+
+    def getMaxFit(self):
+        return self._population.getStats().getMaxFit()
