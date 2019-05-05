@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import warnings
+import itertools
 from abc import ABCMeta, abstractmethod
 import networkx as nx
 from nxpd import draw
@@ -137,7 +138,6 @@ class Organism:
     
     def _computeFitness(self):
         solvedConstraints = 0
-        constraintNum = len(self._constraints)
         for clause in self._constraints :
             solvedConstraints += clause.evaluate(self._genome, self._domains)
         return solvedConstraints + self._fitOffset         #fitness >= fitOffset (generally 1)
@@ -759,6 +759,7 @@ class Simulator:
         	domains = []
         	for i in range (0, len(initial)):
         		domains.append([0,1])     #for these problems (sat + binary constraint), define a binary domain
+        self._domains = domains
         self._population = Population(orgNum, constraints, probability, initial, domains, fitOffset, mutType, maxGenome)
     def run(self):
         for i in range (0, self._rounds):
@@ -820,3 +821,15 @@ class Simulator:
 
     def getMaxFit(self):
         return self._population.getStats().getMaxFit()
+
+    def getMaxPossibleFitAndGenome(self):  #compute every possible genome and return the maximum possible fitness and a max fitness genome; can be very time consuming!
+        maxGenome = []
+        maxFitness = 0
+        for elem in itertools.product(*self._domains):
+            solvedConstraints = 0
+            for clause in self._constraints :
+                solvedConstraints += clause.evaluate(elem, self._domains)
+            if solvedConstraints > maxFitness:
+                maxFitness = solvedConstraints
+                maxGenome = elem
+        return (maxFitness, maxGenome)
